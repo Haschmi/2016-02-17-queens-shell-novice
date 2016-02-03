@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="generator" content="pandoc">
+    <title>Software Carpentry: The Unix Shell</title>
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" type="text/css" href="css/bootstrap/bootstrap.css" />
+    <link rel="stylesheet" type="text/css" href="css/bootstrap/bootstrap-theme.css" />
+    <link rel="stylesheet" type="text/css" href="css/swc.css" />
+    <link rel="alternate" type="application/rss+xml" title="Software Carpentry Blog" href="http://software-carpentry.org/feed.xml"/>
+    <meta charset="UTF-8" />
+    <!-- HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="http://html5shim.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body class="lesson">
+    <div class="container card">
+      <div class="banner">
+        <a href="http://software-carpentry.org" title="Software Carpentry">
+          <img alt="Software Carpentry banner" src="img/software-carpentry-banner.png" />
+        </a>
+      </div>
+      <article>
+      <div class="row">
+        <div class="col-md-10 col-md-offset-1">
+                    <a href="index.html"><h1 class="title">The Unix Shell</h1></a>
+          <h2 class="subtitle">Working remotely on a HPC cluster</h2>
+          <section class="objectives panel panel-warning">
+<div class="panel-heading">
+<h2 id="learning-objectives"><span class="glyphicon glyphicon-certificate"></span>Learning Objectives</h2>
+</div>
+<div class="panel-body">
+<ul>
+<li>Learn how to set up a shell script for job submission</li>
+<li>Learn how to select a cluster to run software on</li>
+<li>What is $PATH?</li>
+<li>Submit a simple job to the scheduler</li>
+<li>Learn how to transfer files to and from your computer with sftp</li>
+</ul>
+</div>
+</section>
+<p>At this point, we have learned all of the basics of using the shell. These skills will get you far on a normal UNIX system like OSX and most flavors of Linux. However, the system we are currently connected to is very different from a typical Linux install and handles big jobs somewhat differently.</p>
+<p>Our system has a special “login” node that users can pretty much do whatever on, and a whole bunch of “production” nodes meant to do the actual work. Each node is essentially a different Linux computer, each with its own set of processors and memory. Although it’s entirely possible to write a shell script to do stuff and then run it on the login node (which we’ve been doing so far), you won’t have access to the same resources as you would on the production nodes (and it’s not considered very polite to other users!). The login nodes are primarily for submitting jobs, retrieving data, short tests, and compiling software.</p>
+<p>We will need to make several modifications to the shell scripts we have been writing in order to get them to run on the production nodes. Specifically, we will need to format our scripts for use by Sun Grid Engine, which is the job scheduler used by HPCVL. Although the job schedulers differ between computing organizations, the general concepts remain the same. What we are going to do is add some special commands to tell Sun Grid Engine exactly what to do with our script and what kind of resources we will need. This allows the cluster to move your job to nodes where resources are available and have your scripts play nice with others’.</p>
+<h2 id="sun-grid-engine-sge-basics">Sun Grid Engine (SGE) basics</h2>
+<p>SGE uses a set of special comments in each shell script to pass instructions to the scheduler. Each instruction is prefaced with <code>#$</code>, and are generally placed near the top of the script.</p>
+<p>Let’s learn a couple of these <code>#$</code> instructions. Note that you don’t need to memorize these or even use all of them - what they do is specified on our wiki at <a href="http://wiki.hpcvl.org/index.php/FAQ:SGE" class="uri">http://wiki.hpcvl.org/index.php/FAQ:SGE</a>. There is another useful reference of SGE commands at <a href="https://kb.iu.edu/d/avgl" class="uri">https://kb.iu.edu/d/avgl</a>.</p>
+<ul>
+<li><p><code>#$ -S /bin/bash</code> - Specify our shell to SGE.</p></li>
+<li><p><code>#$ -cwd</code> - Tell SGE to start the job in the working directory that our job was submitted from.</p></li>
+<li><p><code>#$ -V</code> - pass all of our environment variables (any shell variable we’ve set in our current session) through to the job.</p></li>
+<li><p><code>#$ -N</code> - Assign an english name to our job (instead of just the numeric ID).</p></li>
+<li><p><code>#$ -o &lt;someFile&gt;</code> - Write <code>stdout</code> to a file. I usually just use something like <code>#$ -o $JOB_ID.o</code> so that every run of the same script has a unique output file.</p></li>
+<li><p><code>#$ -e &lt;someFile&gt;</code> - Same as <code>-o</code>, but for <code>stderr</code>.</p></li>
+<li><p><code>#$ -M hpcxxxx@localhost</code> - Specify an email address where the job scheduler can email your (generally hpcxxxx@localhost). On the next line, add something like <code>#$ -m be</code> for the scheduler to email you at the <strong>b</strong>eginning or <strong>e</strong>nd**** respectively.</p></li>
+<li><p><code>#$ -q abaqus.q</code> and <code>#$ -l qname=abaqus.q</code> ensure that your job will be scheduled on the SW (Linux cluster).</p></li>
+<li><p><code>#$ -pe shm.pe X</code> - Ask for “X” number of processors for your job.</p></li>
+<li><p><code>#$ -l mf=XG</code> - Ask for “X” gigabytes of memory for your job. It’s generally a good idea to do this if you need more than 5 gigabytes.</p></li>
+</ul>
+<p>That’s a lot to take in, isn’t it? Let’s just create a “template job”, which we can simply copy and edit for later job submissions.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="co">#!/bin/bash</span>
+
+<span class="co"># stuff you&#39;ll probably never want to change</span>
+<span class="co">#$ -S /bin/bash</span>
+<span class="co">#$ -cwd</span>
+<span class="co">#$ -V</span>
+<span class="co">#$ -M yourUserName@localhost</span>
+<span class="co">#$ -m be</span>
+<span class="co">#$ -q abaqus.q</span>
+<span class="co">#$ -l qname=abaqus.q</span>
+
+<span class="co"># job specific stuff</span>
+<span class="co">#$ -N yourJobName</span>
+<span class="co">#$ -o $JOB_ID.o</span>
+<span class="co">#$ -e $JOB_ID.e</span>
+
+<span class="kw">echo</span> <span class="st">&quot;The actual commands for your job go here.&quot;</span></code></pre></div>
+<p>I saved this as <code>template.sh</code></p>
+<p>We can submit this job and have it get run with <code>qsub template.sh</code>. It will print out the <code>$JOB_ID</code> and tell you the job is submitted. Try this now.</p>
+<p>If we’re super fast, we can see what jobs of ours are running with <code>qstat -u ourUserName</code>. Our job may actually complete before we have the chance to run this, since <code>echo</code> should finish more or less instantaneously (if this happens we won’t see any output).</p>
+<p>We can delete a job using <code>qdel &lt;JOB_ID&gt;</code>, where <code>JOB_ID</code> is simply the job number we saw with <code>qsub</code> or <code>qstat</code>.</p>
+<h2 id="what-is-path-and-how-do-we-modify-it">What is $PATH, and how do we modify it?</h2>
+<p>When running our scripts before, we always had to specify the absolute path to our scripts (remember all that <code>./demo.sh</code> stuff from earlier?). Why did we have to do that for our script, whereas normal UNIX commands like <code>ls</code> or <code>cd</code> did not? This is due to a special shell variable called <code>$PATH</code>.</p>
+<p>What is <code>$PATH</code>, exactly?</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">echo</span> <span class="ot">$PATH</span></code></pre></div>
+<pre class="output"><code>/opt/n1ge6/bin/lx24-amd64:/usr/sbin:/sbin:/usr/bin:/usr/lib64/qt-3.3/bin:/usr/local/bin:/bin:/usr/local/sbin</code></pre>
+<p><code>$PATH</code> is a colon-delimited list of directories. Whenever you run <em>any command whatsoever</em> without specifying its path, your computer searches the directories on <code>$PATH</code> and runs what it finds. If the computer does not find a command on <code>$PATH</code>, it gives you the <code>-bash: xxxxx: command not found</code> error.</p>
+<p>We often want to use software that’s not on our <code>$PATH</code>. There are several ways of doing this:</p>
+<ul>
+<li><p><strong>Specify the relative/absolute path to your script or executable</strong> - As an example, if you had a program called <code>dostuff</code> installed in your home directory somewhere that you wanted to use, you could do so in your script with <code>~/path/dostuff</code> or <code>./dostuff</code> (if your script started in that directory).</p></li>
+<li><p><strong>Use preintalled software</strong> - We’ve installed a lot of extra software that’s available as <code>usepackage</code> entries. To see what’s available, type <code>use -l</code>. You’ll see a bunch of entries that look like <code>blast - Blast current version</code>. To use this entry, just add <code>use blast</code> to your script. You can then call <code>blast</code> as if it were on your <code>$PATH</code> (you can try typing <code>blastn</code> now).</p></li>
+<li><p><strong>Modify <code>$PATH</code> directly</strong> - <code>$PATH</code> is just a list of directories separated by a colon. You can easily add a directory to this with a command like <code>PATH=${PATH}:/directory/you/want/to/add</code>. Note that using the <code>#$ -V</code> option in your scripts will pass your current <code>$PATH</code> to your job.</p></li>
+</ul>
+<h2 id="connecting-to-external-computers-with-ssh">Connecting to external computers with <code>ssh</code></h2>
+<p>We actually already did this at the beginning of the lesson to connect to the HPCVL network. I will give a better overview of what we did earlier. <code>ssh</code> connects you to an external computer and let you use it as if it were your own.</p>
+<p>This is how you connect to another computer with <code>ssh</code>:</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">ssh</span> yourUserName@someInternetAddressOrIP</code></pre></div>
+<p>To connect to HPCVL, the command changes to:</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">ssh</span> hpcxxxx@sfnode0.hpcvl.queensu.ca
+
+<span class="co"># or using IP</span>
+<span class="kw">ssh</span> hpcxxxx@130.15.59.64</code></pre></div>
+<p>After ssh-ing to <code>sfnode0</code> and entering your password, you will be connected to the M9000 system (Solaris). You will usually want to use the SW system instead (Linux). To use the Linux cluster, <code>ssh</code> to the linux login node with <code>ssh swlogin1</code>. Note that all files are shared between both systems.</p>
+<p>One helpful tip is to always use <code>ssh -X</code> instead of simply <code>ssh</code>. The <code>-X</code> option enables X-forwarding. In plain English, this means that any pop-up windows you create on HPCVL are passed to your computer screen as well.</p>
+<p>To close an <code>ssh</code> connection, simply type <code>exit</code>.</p>
+<h2 id="transferring-files-to-and-from-hpcvl-using-sftp">Transferring files to and from HPCVL using <code>sftp</code></h2>
+<p>So, say at the end of the day we’ve done some work on the cluster. Now we want to take our files off of the cluster. We are going to do this using <code>sftp</code> (Secure File Transfer Protocol). <code>sftp</code> is a lot like <code>ssh</code> (what we are currently connected to the cluster with), only with a smaller list of commands we can use for transferring files.</p>
+<p>Open up a new terminal window. Note that people on Windows should immediately type in <code>cd MyDocuments</code> to get into their <code>My Documents</code> folder on Windows.</p>
+<p>Get an example file that you want to upload in a directory on your computer. It can be literally anything. In terminal/MobaXterm, <code>cd</code> to that directory.</p>
+<p>Now let’s connect to the cluster with <code>sftp</code> to transfer files.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">sftp</span> hpcxxxx@sfnode0.hpcvl.queensu.ca</code></pre></div>
+<p>Once you login, you should see a prompt with something like:</p>
+<pre class="output"><code>Connected to sfnode0.hpcvl.queensu.ca.
+sftp&gt;</code></pre>
+<p><code>sftp</code> is very similar to the <code>bash</code> shell we get with <code>ssh</code>. To see a list of possible commands, simply type <code>help</code>.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">help</span></code></pre></div>
+<pre class="output"><code>Available commands:
+bye                                Quit sftp
+cd path                            Change remote directory to &#39;path&#39;
+chgrp grp path                     Change group of file &#39;path&#39; to &#39;grp&#39;
+chmod mode path                    Change permissions of file &#39;path&#39; to &#39;mode&#39;
+chown own path                     Change owner of file &#39;path&#39; to &#39;own&#39;
+df [-hi] [path]                    Display statistics for current directory or
+                                   filesystem containing &#39;path&#39;
+exit                               Quit sftp
+get [-Ppr] remote [local]          Download file
+reget remote [local]            Resume download file
+reput [local] remote               Resume upload file
+help                               Display this help text
+
+[snip to save screen space]</code></pre>
+<p>You’ll see a lot of old, familiar commands like <code>cd</code> and <code>ls</code>, along with a few new ones. Note that a lot of these commands make reference to <code>local</code> and <code>remote</code> computers. We are actually connected to two computers at the same time: our own (at the directory where we called <code>sftp</code>), and a remote (at our home directory on <code>sfnode0</code>). A lot of our old commands now have two versions: a remote one, and a local one (usally prefixed with <code>l</code>). Let’s try a few of these out to get the hang of it.</p>
+<p>Important <code>sftp</code> commands (used the same way as before!):</p>
+<ul>
+<li><p><code>pwd</code> / <code>lpwd</code>: Print the remote working directory / our local working directory.</p></li>
+<li><p><code>cd</code> / <code>lcd</code>: Change remote working directory / local working directory.</p></li>
+<li><p><code>ls</code> / <code>lls</code>: List remote/local files.</p></li>
+<li><p><code>mkdir</code> / <code>lmkdir</code>: Create a remote / local directory</p></li>
+<li><p><code>put &lt;localFile&gt;</code>: Moves a file from your local working directory to the remote working directory. Can put multiple files by using <code>*</code> (example: <code>put *.txt</code>).</p></li>
+<li><p><code>get &lt;remoteFile</code>: “Gets” a file from the remote working directory and downloads it to your local working directory.</p></li>
+<li><p><code>bye</code> / <code>exit</code>: Either of these commands will quit your <code>sftp</code> session.</p></li>
+</ul>
+<section class="challenge panel panel-success">
+<div class="panel-heading">
+<h2 id="uploading-downloading-files"><span class="glyphicon glyphicon-pencil"></span>Uploading / downloading files</h2>
+</div>
+<div class="panel-body">
+<p>Upload a file (can be any file whatsoever) to your home directory on HPCVL. Now download the <code>demo.sh</code> shell script we wrote earlier to your computer.</p>
+</div>
+</section>
+        </div>
+      </div>
+      </article>
+      <div class="footer">
+        <a class="label swc-blue-bg" href="http://software-carpentry.org">Software Carpentry</a>
+        <a class="label swc-blue-bg" href="https://github.com/swcarpentry/shell-novice">Source</a>
+        <a class="label swc-blue-bg" href="mailto:admin@software-carpentry.org">Contact</a>
+        <a class="label swc-blue-bg" href="LICENSE.html">License</a>
+      </div>
+    </div>
+    <!-- Javascript placed at the end of the document so the pages load faster -->
+    <script src="http://software-carpentry.org/v5/js/jquery-1.9.1.min.js"></script>
+    <script src="css/bootstrap/bootstrap-js/bootstrap.js"></script>
+  </body>
+</html>
